@@ -3,7 +3,6 @@ import re
 import requests
 from bs4 import BeautifulSoup
 import tweepy
-import openai
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ContextTypes
 from notion_client import Client as NotionClient
@@ -136,20 +135,65 @@ def analyze_discord(invite_url: str) -> str:
     except Exception as e:
         return f"🔔 Discord: ошибка - {str(e)[:50]}"
 
-def get_ai_summary(data: str) -> str:
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[{
-                "role": "user", 
-                "content": f"Проанализируй крипто-проект по данным и дай краткий вывод о потенциале airdrop (50 слов):\n{data}"
-            }],
-            max_tokens=150,
-            temperature=0.7
-        )
-        return f"🤖 AI Анализ: {response.choices[0].message.content.strip()}"
-    except Exception as e:
-        return f"🤖 AI: ошибка - {str(e)[:50]}"
+def get_manual_analysis(data: str) -> str:
+    """Простой анализ без AI"""
+    analysis = []
+    
+    # Анализ по ключевым словам
+    data_lower = data.lower()
+    
+    # Социальные сигналы
+    if "подписчиков" in data_lower:
+        follower_match = re.search(r'(\d+[,\d]*)\s+подписчиков', data_lower)
+        if follower_match:
+            followers = int(follower_match.group(1).replace(',', ''))
+            if followers > 100000:
+                analysis.append("✅ Сильное сообщество")
+            elif followers > 10000:
+                analysis.append("🟡 Среднее сообщество")
+            else:
+                analysis.append("🔴 Малое сообщество")
+    
+    # Токеномика
+    if "market cap" in data_lower:
+        analysis.append("✅ Токен в обороте")
+    elif "данные не найдены" in data_lower:
+        analysis.append("🎯 Возможный airdrop (нет токена)")
+    
+    # GitHub активность
+    if "github" in data_lower and "⭐" in data:
+        star_match = re.search(r'⭐(\d+)', data)
+        if star_match:
+            stars = int(star_match.group(1))
+            if stars > 1000:
+                analysis.append("✅ Активная разработка")
+            elif stars > 100:
+                analysis.append("🟡 Умеренная разработка")
+    
+    # Discord активность
+    if "участников" in data_lower:
+        member_match = re.search(r'(\d+[,\d]*)\s+участников', data_lower)
+        if member_match:
+            members = int(member_match.group(1).replace(',', ''))
+            if members > 50000:
+                analysis.append("✅ Большое сообщество")
+            elif members > 10000:
+                analysis.append("🟡 Среднее сообщество")
+    
+    # Общий вывод
+    if len(analysis) == 0:
+        return "🤖 Анализ: Недостаточно данных для оценки"
+    
+    score = len([a for a in analysis if a.startswith("✅")])
+    
+    if score >= 3:
+        verdict = "🚀 Высокий потенциал"
+    elif score >= 2:
+        verdict = "🟡 Средний потенциал"
+    else:
+        verdict = "⚠️ Низкий потенциал"
+    
+    return f"🤖 Анализ: {verdict}\n📊 Факторы: {' | '.join(analysis)}"
 
 def research_project(url: str) -> str:
     results = []
@@ -182,10 +226,9 @@ def research_project(url: str) -> str:
     # Собираем все данные
     summary = "\n\n".join(filter(None, results))
     
-    # AI анализ
-    if OPENAI_API_KEY:
-        ai_summary = get_ai_summary(summary)
-        summary += f"\n\n{ai_summary}"
+    # Добавляем собственный анализ
+    analysis = get_manual_analysis(summary)
+    summary += f"\n\n{analysis}"
     
     return summary
 
