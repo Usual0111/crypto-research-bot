@@ -1,13 +1,11 @@
 import os
 import re
-import asyncio
 import requests
 from bs4 import BeautifulSoup
 import tweepy
 import openai
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, CommandHandler, ContextTypes
-import discord
 from notion_client import Client as NotionClient
 from github import Github
 import json
@@ -16,7 +14,6 @@ import json
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TWITTER_BEARER = os.getenv("TWITTER_BEARER_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
@@ -25,11 +22,6 @@ openai.api_key = OPENAI_API_KEY
 twitter_client = tweepy.Client(bearer_token=TWITTER_BEARER) if TWITTER_BEARER else None
 github_client = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
 notion_client = NotionClient(auth=NOTION_API_KEY) if NOTION_API_KEY else None
-
-intents = discord.Intents.default()
-intents.guilds = True
-intents.messages = True
-discord_client = discord.Client(intents=intents) if DISCORD_BOT_TOKEN else None
 
 def get_website_info(url: str) -> str:
     try:
@@ -125,17 +117,22 @@ def get_github_info(repo_url: str) -> str:
     except Exception as e:
         return f"🐙 GitHub: ошибка - {str(e)[:50]}"
 
-async def analyze_discord(invite_url: str) -> str:
-    if not discord_client:
-        return "🔔 Discord: клиент не настроен"
-    
+def analyze_discord(invite_url: str) -> str:
     try:
-        invite = await discord_client.fetch_invite(invite_url)
-        guild = invite.guild
-        members = guild.approximate_member_count or 0
-        online = guild.approximate_presence_count or 0
+        # Простой парсинг через веб-запрос
+        invite_code = invite_url.split('/')[-1]
+        api_url = f"https://discord.com/api/v9/invites/{invite_code}?with_counts=true"
         
-        return f"🔔 {guild.name}: ~{members:,} участников, ~{online:,} онлайн"
+        response = requests.get(api_url, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            guild_name = data.get('guild', {}).get('name', 'Unknown')
+            members = data.get('approximate_member_count', 0)
+            online = data.get('approximate_presence_count', 0)
+            
+            return f"🔔 {guild_name}: ~{members:,} участников, ~{online:,} онлайн"
+        else:
+            return "🔔 Discord: сервер недоступен"
     except Exception as e:
         return f"🔔 Discord: ошибка - {str(e)[:50]}"
 
@@ -154,7 +151,7 @@ def get_ai_summary(data: str) -> str:
     except Exception as e:
         return f"🤖 AI: ошибка - {str(e)[:50]}"
 
-async def research_project(url: str) -> str:
+def research_project(url: str) -> str:
     results = []
     
     # Базовый анализ сайта
@@ -178,8 +175,8 @@ async def research_project(url: str) -> str:
     
     # Discord анализ
     discord_match = re.search(r'discord\.gg/[A-Za-z0-9]+', url)
-    if discord_match and discord_client:
-        discord_result = await analyze_discord(discord_match.group(0))
+    if discord_match:
+        discord_result = analyze_discord(discord_match.group(0))
         results.append(discord_result)
     
     # Собираем все данные
@@ -217,7 +214,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     for url in urls[:2]:  # Максимум 2 ссылки
         try:
-            result = await research_project(url)
+            result = research_project(url)
             # Разбиваем длинные сообщения
             if len(result) > 4000:
                 parts = [result[i:i+4000] for i in range(0, len(result), 4000)]
@@ -228,14 +225,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка анализа: {str(e)[:100]}")
 
-async def main():
+def main():
     if not TELEGRAM_TOKEN:
         print("❌ TELEGRAM_TOKEN не найден")
         return
-    
-    # Запуск Discord клиента в фоне
-    if discord_client and DISCORD_BOT_TOKEN:
-        asyncio.create_task(discord_client.start(DISCORD_BOT_TOKEN))
     
     # Telegram бот
     app = Application.builder().token(TELEGRAM_TOKEN).build()
@@ -244,7 +237,7 @@ async def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     print("🚀 Бот запущен...")
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    main()
