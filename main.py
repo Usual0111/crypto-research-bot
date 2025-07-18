@@ -17,7 +17,6 @@ NOTION_API_KEY = os.getenv("NOTION_API_KEY")
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 
 # Initialize clients
-openai.api_key = OPENAI_API_KEY
 twitter_client = tweepy.Client(bearer_token=TWITTER_BEARER) if TWITTER_BEARER else None
 github_client = Github(GITHUB_TOKEN) if GITHUB_TOKEN else None
 notion_client = NotionClient(auth=NOTION_API_KEY) if NOTION_API_KEY else None
@@ -203,25 +202,57 @@ def research_project(url: str) -> str:
     
     # Извлечение Twitter handle
     twitter_handle = None
-    twitter_match = re.search(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]+)', url)
-    if twitter_match:
-        twitter_handle = twitter_match.group(1)
-        results.append(get_twitter_stats(twitter_handle))
+    try:
+        # Сначала пытаемся найти в самом URL
+        twitter_match = re.search(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]+)', url)
+        if twitter_match:
+            twitter_handle = twitter_match.group(1)
+        else:
+            # Если не нашли в URL, пытаемся найти на странице
+            response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            soup = BeautifulSoup(response.text, "html.parser")
+            links = [a.get('href') for a in soup.find_all('a', href=True)]
+            for link in links:
+                if link and ('twitter.com' in link or 'x.com' in link):
+                    twitter_match = re.search(r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]+)', link)
+                    if twitter_match:
+                        twitter_handle = twitter_match.group(1)
+                        break
+    except Exception as e:
+        print(f"Error extracting Twitter handle: {e}")
     
-    # Токеномика (используем Twitter handle как символ)
     if twitter_handle:
+        results.append(get_twitter_stats(twitter_handle))
+        # Токеномика (используем Twitter handle как символ)
         results.append(get_tokenomics(twitter_handle))
     
     # GitHub анализ
-    github_match = re.search(r'github\.com/[^\s]+', url)
-    if github_match:
-        results.append(get_github_info(github_match.group(0)))
+    try:
+        response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        soup = BeautifulSoup(response.text, "html.parser")
+        links = [a.get('href') for a in soup.find_all('a', href=True)]
+        for link in links:
+            if link and 'github.com' in link:
+                github_match = re.search(r'github\.com/[^/]+/[^/\s]+', link)
+                if github_match:
+                    results.append(get_github_info(github_match.group(0)))
+                    break
+    except Exception as e:
+        print(f"Error extracting GitHub info: {e}")
     
     # Discord анализ
-    discord_match = re.search(r'discord\.gg/[A-Za-z0-9]+', url)
-    if discord_match:
-        discord_result = analyze_discord(discord_match.group(0))
-        results.append(discord_result)
+    try:
+        response = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+        soup = BeautifulSoup(response.text, "html.parser")
+        links = [a.get('href') for a in soup.find_all('a', href=True)]
+        for link in links:
+            if link and ('discord.gg' in link or 'discord.com/invite' in link):
+                discord_match = re.search(r'discord\.gg/[A-Za-z0-9]+', link)
+                if discord_match:
+                    results.append(analyze_discord(discord_match.group(0)))
+                    break
+    except Exception as e:
+        print(f"Error extracting Discord info: {e}")
     
     # Собираем все данные
     summary = "\n\n".join(filter(None, results))
